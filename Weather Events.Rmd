@@ -1,0 +1,429 @@
+---
+title: "Economic and Health Consequences of Various Weather Events"
+author: "Nick Newsome"
+date: " March 17, 2020"
+output:
+  html_document:
+    toc: yes
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Synopsis
+
+This is an analysis of weather events contained within the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This data set can be downloaded here: https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2. Documentation on the data set can be found here: https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf and https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf. I took the data set and grouped the event types into similar groups to limit and structure the output. Once cleaned, I was able to determine which events had the greatest impact on the health of the population and which had the greatest economic costs. The health consequences were determined by number of fatalities, injuries, and by both fatalities and injuries. These were calculated by using a single event, the total over all events of each type, and by the average number within each type. The economic costs were determined by combining property damage and crop damage into one economic category. The results of economic costs were calculated by using the single event with the greatest economic cost, the type of event that has cost the most economically overall, and the type that has the highest average cost per occurrence.
+
+## 2. Data Processing
+### 2.A. Initialize libraries
+```{r libraries, message=FALSE, warning=FALSE}
+library(dplyr)
+library(stringr)
+library(data.table)
+library(ggplot2)
+library(cowplot)
+```
+
+### 2.B. Import dataset
+
+The package R.utils may need to be installed before reading in the original data. It allows 'fread' to read compressed data. It may take a minute or more to import this data set.
+```{r importdata}
+data <- fread('repdata_data_StormData.csv.bz2')
+summary(data)
+```
+
+Verify that all rows were imported, there should be 902,297
+```{r verify rows imported}
+cat('Number of rows imported:', NROW(data))
+```
+
+### 2.C. Preliminary Cleaning
+
+For this analysis, time and location (other than the state) are not necessary. Gather only the necessary columns and rename them to more friendly names.
+```{r select adn rename columns}
+data <- select(data, BGN_DATE, BGN_TIME, COUNTYNAME, STATE, EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP)
+data <- rename(data, Date=BGN_DATE, Time=BGN_TIME, County=COUNTYNAME, State=STATE, Type=EVTYPE, Fatalities=FATALITIES, Injuries=INJURIES, PropDamage=PROPDMG, PDExp=PROPDMGEXP, CropDamage=CROPDMG, CDExp=CROPDMGEXP)
+```
+
+Remove time from date
+```{r change date}
+data$Date <- str_sub(data$Date, end=-9)
+```
+
+Glimpse the current state of data
+```{r head}
+head(data, 3)
+```
+
+### 2.D. Preprocessing
+#### 2.D.1. Organize Event Types
+
+Find out how many unique events there are.
+```{r unique types}
+uniquetype <- distinct(data, Type)
+cat('There are', NROW(uniquetype), 'distinct event types')
+```
+
+There are too many categories based off the documentation. This is due to misspellings and combining two categories into one, or simply putting a name that was not one of the categories. I began by grouping some types together, such as Hurricane, Typhoon, Tropical Depression, and Tropical Storm, all into one group. I continued to do this and checked on the number of unique types 'uniquetype' to see what was being overlooked. I eventually settled on 30 categories and then combined anything left over into a 31st category named 'Other'. As the plots will show, this leftover category did not play any role in the results I was looking for.  
+  
+Create lists of names to search for in order to group event types.
+```{r create list to search for types}
+data$Type <- tolower(data$Type)
+hurricane <- c('hurricane', 'tropical storm', 'typhoon', 'tropical depression', 'floyd')
+tornado <- c('tornado', 'torndao')
+lightning <- c('lightning', 'lighting', 'ligntning')
+hail <- 'hail'
+micro <- 'burst'
+wind <- c('wind', 'wnd')
+tstorm <- c('tstm', 'thunderstorm', 'gustnado')
+cflood <- 'coastal flood'
+lflood <- 'lakeshore flood'
+fflood <- 'flash'
+flood <- 'flood'
+tsunami <- c('tsunami', 'rogue')
+cloud <- c('funnel', 'cloud', 'wall')
+fog <- c('fog', 'vog')
+avalanche <- c('avalan', 'slide')
+fire <- c('fire', 'smoke')
+dust <- 'dust'
+drought <- c('drough', 'dry', 'driest')
+surf <- c('tide', 'surf', 'storm surge', 'coastal surge', 'beach', 'coastal erosion', 'coastal storm', 'coastalstorm')
+current <- 'rip current'
+seiche <- 'seiche'
+volcano <- 'volcan'
+waterspout <- 'spout'
+lesnow <- c('effect snow', 'lake snow')
+blizzard <- 'blizzard'
+wstorm <- c('winter', 'snow', 'ice', 'freezing rain', 'sleet', 'frost', 'wintry', 'mixed precip', 'icy', 'heavy mix', 'freezing drizzle')
+rain <- c('rain', 'precip', 'unseasonably wet', 'shower', 'wet')
+heat <- c('high', 'heat', 'warm', 'hot')
+cold <- c('cold', 'record low', 'low temp', 'freeze', 'thermia', 'cool')
+sea <- c('seas', 'swells', 'marine')
+other <- c('Hurricane', 'Tornado', 'Lightning', 'Hail', 'Microburst', 'Wind', 'Thunderstorm','Coastal Flood', 'Lakeshore Flood', 'Flash Flood', 'Flood', 'Tsunami', 'Wall or Funnel Cloud', 'Fog', 'Avalanche or Rock/Mudslide', 'Wildfires', 'Dust Storm', 'Drough', 'High Tide/Surf or Coastal Storm/Erosion', 'Rip Current', 'Seiche', 'Volcanic Activity', 'Waterspout', 'Lake-Effect Snow', 'Blizzard', 'Winter Storm', 'Rain', 'Extreme Heat', 'Extreme Cold', 'Marine or Sea Weather')
+```
+
+Use these categories to change each event type into one of the 31 revised categories.
+```{r replace types}
+data$Type <- replace(data$Type, grep(paste(hurricane, collapse = '|'), data$Type), 'Hurricane')
+data$Type <- replace(data$Type, grep(paste(tornado, collapse = '|'), data$Type), 'Tornado')
+data$Type <- replace(data$Type, grep(paste(lightning, collapse = '|'), data$Type), 'Lightning')
+data$Type <- replace(data$Type, grep(paste(hail, collapse = '|'), data$Type), 'Hail')
+data$Type <- replace(data$Type, grep(paste(micro, collapse = '|'), data$Type), 'Microburst')
+data$Type <- replace(data$Type, grep(paste(wind, collapse = '|'), data$Type), 'Wind')
+data$Type <- replace(data$Type, grep(paste(tstorm, collapse = '|'), data$Type), 'Thunderstorm')
+data$Type <- replace(data$Type, grep(paste(cflood, collapse = '|'), data$Type), 'Coastal Flood')
+data$Type <- replace(data$Type, grep(paste(lflood, collapse = '|'), data$Type), 'Lakeshore Flood')
+data$Type <- replace(data$Type, grep(paste(fflood, collapse = '|'), data$Type), 'Flash Flood')
+data$Type <- replace(data$Type, grep(paste(flood, collapse = '|'), data$Type), 'Flood')
+data$Type <- replace(data$Type, grep(paste(tsunami, collapse = '|'), data$Type), 'Tsunami')
+data$Type <- replace(data$Type, grep(paste(cloud, collapse = '|'), data$Type), 'Wall or Funnel Cloud')
+data$Type <- replace(data$Type, grep(paste(fog, collapse = '|'), data$Type), 'Fog')
+data$Type <- replace(data$Type, grep(paste(avalanche, collapse = '|'), data$Type), 'Avalanche or Rock/Mudslide')
+data$Type <- replace(data$Type, grep(paste(fire, collapse = '|'), data$Type), 'Wildfires')
+data$Type <- replace(data$Type, grep(paste(dust, collapse = '|'), data$Type), 'Dust Storm')
+data$Type <- replace(data$Type, grep(paste(drought, collapse = '|'), data$Type), 'Drought')
+data$Type <- replace(data$Type, grep(paste(surf, collapse = '|'), data$Type), 'High Tide/Surf or Coastal Storm/Erosion')
+data$Type <- replace(data$Type, grep(paste(current, collapse = '|'), data$Type), 'Rip Current')
+data$Type <- replace(data$Type, grep(paste(seiche, collapse = '|'), data$Type), 'Seiche')
+data$Type <- replace(data$Type, grep(paste(volcano, collapse = '|'), data$Type), 'Volcanic Activity')
+data$Type <- replace(data$Type, grep(paste(waterspout, collapse = '|'), data$Type), 'Waterspout')
+data$Type <- replace(data$Type, grep(paste(lesnow, collapse = '|'), data$Type), 'Lake-Effect Snow')
+data$Type <- replace(data$Type, grep(paste(blizzard, collapse = '|'), data$Type), 'Blizzard')
+data$Type <- replace(data$Type, grep(paste(wstorm, collapse = '|'), data$Type), 'Winter Storm')
+data$Type <- replace(data$Type, grep(paste(rain, collapse = '|'), data$Type), 'Rain')
+data$Type <- replace(data$Type, grep(paste(heat, collapse = '|'), data$Type), 'Extreme Heat')
+data$Type <- replace(data$Type, grep(paste(cold, collapse = '|'), data$Type), 'Extreme Cold')
+data$Type <- replace(data$Type, grep(paste(sea, collapse = '|'), data$Type), 'Marine or Sea Weather')
+data$Type <- replace(data$Type, !grepl(paste(other, collapse = '|'), data$Type), 'Other')
+```
+
+Now check the code to verify there are only 31 event types.
+```{r verify event types}
+cat('There are now', NROW(distinct(data, Type)), 'distinct event types')
+```
+
+
+```{r clean memory, echo=FALSE}
+# Clean the preprocessing data from memory
+rm(uniquetype, avalanche, blizzard, cflood, cloud, cold, current, drought, dust, fflood, fire, flood, fog,hail, heat, hurricane, lesnow, lflood, lightning, micro, other, rain, sea, seiche, surf, tornado, tstorm, tsunami, volcano, waterspout, wind, wstorm)
+```
+
+#### 2.D.2. Combine Economic Damage
+
+The Economic Damage is separated into property damage and crop damage. Each of these columns (PropDamage and CropDamage) is a number, but the factor (such as thousands or millions) is in the PDExp and CDExp columns respectively. Need to look at the factors to determine how they are used, so that they can be multiplied by the PropDamage or CropDamage column to give a number of the total damage.
+```{r unique economic damage}
+print('These are the factors for PropDamage:')
+print(as.list(distinct(data,PDExp)))
+print('These are the factors for CropDamage:')
+print(as.list(distinct(data,CDExp)))
+```
+
+From the National Climatic Data Center Storm Events FAQ:  
+"Estimates should be rounded to three significant digits, followed by an alphabetical character signifying the magnitude of the number, i.e., 1.55B for $1,550,000,000.  Alphabetical characters used to signify magnitude include “K” for thousands, “M” for millions, and “B” for billions."  
+This leaves 'h' and 'H', the special characters, those left blank, and the digits as unknown factors.  
+  
+I am unable to find anything in the documentation detailing what any of these other factors may mean. However, each event can be manually checked at https://www.ncdc.noaa.gov/stormevents/. So I searched for these other factors to see what I could find. I started by changing all character factors to lowercase.
+```{r to lowercase}
+data$PDExp <- tolower(data$PDExp)
+data$CDExp <- tolower(data$CDExp)
+```
+
+CDExp only contains 4 unknown factors (missing factor, ?, 0, 2), while PDExp has more. So I used PDExp in my search.
+```{r PDExp factors}
+hasPD <- filter(data, (PDExp != 'b') & (PDExp != 'm') & (PDExp != 'k') & (PropDamage != 0))
+cat('There are', NROW(distinct(hasPD, PDExp)), 'distinct factors for PropDamage that have a value listed uner PropDamage\nThey are: \n')
+print(as.list(distinct(hasPD, PDExp)))
+```
+
+Starting with the factor 7, I gather all the rows with 7 for the factor and property damage not equal to 0.
+```{r factor 7}
+seven <- filter(data, (PDExp == 7) & (PropDamage != 0))
+cat('Number of events with property damage and a factor of 7:', NROW(seven))
+head(seven)
+```
+
+This gives two results, Franklin, MO and Northampton, NC. with PropDamage-PDExp of 14-7 and 6-7 respectively. Searching for the NC event does not produce any results. The MO search yields three results that appear to be identical except for damage costs. The property damages came in at $400, $300, and $147. The $147 looks similar to the 14-7 PropDamage-PDExp results.  
+  
+Next I search for factor 6.
+```{r factor 6}
+six <- filter(data, (PDExp == 6) & (PropDamage != 0))
+cat('Number of events with property damage and a factor of 6:', NROW(six))
+head(six)
+```
+
+Manually searching all three of these possibilities gives results similar to those found for MO for factor 7. Thus a pattern has emerged that if a factor is a digit, it is merely the ones place while the PropDamage shoud be multiplied by ten. So 24-6 becomes $246. This leaves missing factors, 'h/H',  '+' and '-'.  
+  
+```{r factor +}
+plus <- filter(data, (PDExp == '+') & (PropDamage != 0))
+cat('Number of events with property damage and a factor of +:', NROW(plus))
+head(plus)
+```
+
+Only one of these five showed up during the manual search (06/05/1995 NV) and the damage was $60 which would result in the '+' being a factor of 1.
+
+```{r factor -}
+minus <- filter(data, (PDExp == '-') & (PropDamage != 0))
+cat('Number of events with property damage and a factor of -:', NROW(minus))
+head(minus)
+```
+
+Only one result for this search, and it could not be found manually. Best guess would be to use a factor of 1 like in the '+' factor.
+
+```{r factor missing}
+missing <- filter(data, (PDExp == '') & (PropDamage != 0))
+cat('Number of events with property damage and a missing factor:', NROW(missing))
+head(missing)
+```
+
+There are 76 results for this search. After choosing a few (Union, Fl 01/08/93, Decauter, GA 08/19/95, and Hart, GA 03/31/93), it appears that if the factor is missing, then it should be a 1.
+
+```{r factor h}
+hundred <- filter(data, (PDExp == 'h') & (PropDamage != 0))
+cat('Number of events with property damage and a factor of h:', NROW(hundred))
+head(hundred)
+```
+
+There are 7 results with factor of 'h'. Clinton, MI 09/16/1994, has a PropDamage of 2 which should be 200. Sherman, NE 07/14/1995 also indicates that 'h' is a factor of 100. These are the expected results and can be applied to others with a factor of 'h'.
+
+Change the factors to their appropriate numeric values. Since we are dealing with values in the billions, the ones place is irrelevant. So for digit factors, I simply used a factor of 10 and discarded the ones place.
+```{r change economic damage factors, warning=FALSE}
+data$PDExp <- gsub('[0-9]', 10, data$PDExp)
+data$CDExp <- gsub('[0-9]', 10, data$CDExp)
+data$PDExp <- gsub('[[:punct:]]',1,data$PDExp)
+data$CDExp <- gsub('[[:punct:]]',1,data$CDExp)
+replacements <- (c('b'='1000000000', 'm'='1000000', 'k'='1000', 'h'='100'))
+data$PDExp <- str_replace_all(data$PDExp, c(replacements))
+data$CDExp <- str_replace_all(data$CDExp, c(replacements))
+data$PDExp <- as.integer(data$PDExp)
+data$CDExp <- as.integer(data$CDExp)
+data$PDExp[is.na(data$PDExp)] <- 1
+data$CDExp[is.na(data$CDExp)] <- 1
+```
+
+There should now be only 6 factors (1e09, 1e06, 1000, 100, 10, 1).
+```{r test number of factors}
+factors <- full_join(distinct(data, PDExp), distinct(data, CDExp), by=c('PDExp'='CDExp'))
+cat('There are', NROW(factors), 'distinct factors for PropDamage and CropDamage \nThey are: \n')
+print(as.list(factors))
+```
+
+In order to calculate the economic damage, the property and crop damage needs to be totaled.
+```{r}
+data <- mutate(data, EconomicDamage=CropDamage*CDExp + PropDamage*PDExp)
+```
+
+#### 2.D.3. Fatalities and Injuries Exclusive?
+
+Are fatalities considered injuries? In other words, is the column 'Injuries' inclusive of 'Fatalities'? If so, then you couldn't have more fatalities than injuries.
+```{r question}
+cat('There are', NROW(filter(data, Injuries < Fatalities)), 'events with more fatalities than injuries')
+```
+
+So, Injuries are exclusive of Fatalities.  
+
+```{r clean memory2, echo=FALSE}
+#Clean preprocessing data from memory
+rm(factors, hasPD, replacements)
+```
+
+## 3. Results
+### 3.A. Results from a Single Event
+
+Which single event has caused the most fatalities?
+```{r single most fatal}
+singlemostfatal <- filter(data, Fatalities == max(data$Fatalities))
+cat('Single most fatal event was', singlemostfatal[1,'Type'], 'on', singlemostfatal[1,'Date'], 'in',
+    singlemostfatal[1,'State'], 'with', singlemostfatal[1,'Fatalities'], 'fatalities.')
+rm(singlemostfatal)
+```
+
+Which single event has caused the most injuries?
+```{r single most injury}
+singlemostinjury <- filter(data, Injuries == max(data$Injuries))
+cat('Single most injurious event was', singlemostinjury[1,'Type'], 'on', singlemostinjury[1,'Date'],
+    'in', singlemostinjury[1,'State'], 'with', singlemostinjury[1,'Injuries'], 'injuries')
+rm(singlemostinjury)
+```
+
+Which single event has caused the most fatalities and injuries?
+```{r single fatalities and injuries}
+data <- mutate(data, TotalFI=Fatalities+Injuries)
+singlemostfi <- filter(data, TotalFI == max(data$TotalFI))
+cat('Single event with most total fatalities and injuries', singlemostfi[1,'Type'], 'on', singlemostfi[1,'Date'], 'in',
+    singlemostfi[1,'State'], 'with', singlemostfi[1,'TotalFI'], 'fatalities and injuries')
+rm(singlemostfi)
+```
+
+Which single event has caused the most economic damage?
+```{r single most economic damage}
+singlemosted <- filter(data, EconomicDamage == max(data$EconomicDamage))
+cat('Single costliest event was', singlemosted[1,'Type'], 'on', singlemosted[1,'Date'], 'in', singlemosted[1,'State'], 'which caused $', format(singlemosted[1,'EconomicDamage'], big.mark=',', big.interval=3L), 'in damages')
+rm(singlemosted)
+```
+
+### 3.B. Total Results from All Events
+
+Which type of event has caused the most total fatalities?
+```{r total most fatal}
+totalmostfatal <- arrange(aggregate(Fatalities ~ Type, data, sum), desc(Fatalities))
+cat('Events causing the most total fatalities is', totalmostfatal[1,'Type'], 
+    'with', totalmostfatal[1,'Fatalities'], 'total fatalaties')
+rm(totalmostfatal)
+```
+
+Which type of event has caused the most total injuries?
+```{r total most injury}
+totalmostinjury <- arrange(aggregate(Injuries ~ Type, data, sum), desc(Injuries))
+cat('Events causing the most total injuries is', totalmostinjury[1,'Type'], 
+    'with', totalmostinjury[1,'Injuries'], 'total injuries')
+rm(totalmostinjury)
+```
+
+Which type of event has caused the most total fatalities and injuries?
+```{r total fatalities and injuries}
+totalmostfi <- arrange(aggregate(TotalFI ~ Type, data, sum), desc(TotalFI))
+cat('Events causing the most total fatalities and injuries is', totalmostfi[1,'Type'], 
+    'with', totalmostfi[1,'TotalFI'], 'total fatalaties and injuries')
+```
+
+Which type of event has caused the most economic damage?
+```{r total economic damage}
+totalmosted <- arrange(aggregate(EconomicDamage ~ Type, data, sum), desc(EconomicDamage))
+cat('Events that has caused the most economic damages is', totalmosted[1,'Type'], 'which has caused $', format(totalmosted[1,'EconomicDamage'], big.mark=',', big.interval=3L), 'in damages')
+```
+
+These three plots show the health results and economic results from various events. Due to the size of the plots necessary to display 31 different categories, the plots only show the type of events that meet a minimum threshold. The first plot details categories where the total from all events is over 1000 fatalities and injuries. As the plot shows, Tornado events are by far the largest cause of fatalities and injuries. In fact, Tornadoes have caused more fatalities and injuries than all other weather events combined, as is shown in the second plot. The final plot shows a breakdown of total economic damage from weather types with a minimum of one billion dollars in damages.
+```{r results of total events, fig.width=7.5, fig.height=10.5}
+over999 <- filter(totalmostfi, TotalFI > 999)
+totalfi <- ggplot(over999, aes(x=Type, y=TotalFI, fill=Type)) +
+  geom_bar(stat='identity') + guides(fill=FALSE) + coord_flip() +
+  ggtitle('1,000 Minimum Total Fatalities or Injuries') + 
+  xlab('') + ylab('Number of injuries and fatalities') + 
+  theme(plot.title=element_text(size=16))
+
+tornadovsall <- totalmostfi
+tornadovsall$Type <- replace(tornadovsall$Type, !grepl('Tornado', tornadovsall$Type), ' All Others')
+tornadovsall <- aggregate(TotalFI ~ Type, tornadovsall, sum)
+tornadofi <- ggplot(tornadovsall, aes(x=Type, y=TotalFI, fill=Type)) +
+  geom_bar(stat='identity') + guides(fill=FALSE) +
+  geom_text(aes(label = TotalFI), vjust = 1.5, color = 'white', size = 4) + 
+  ylab('') + xlab('Total Fatalities and Injuries') + 
+  ggtitle('Tornado vs All Other Events') +
+  theme(plot.title = element_text(size=16))
+
+over1b <- filter(totalmosted, EconomicDamage > 1e+09)
+totaled <- ggplot(over1b, aes(x=Type, y=EconomicDamage, fill=Type)) + 
+  geom_bar(stat='identity') + xlab('') + 
+  ggtitle('Over $1 Billion Total Damage') + 
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(), 
+  plot.title = element_text(size=16)) +
+  scale_y_discrete(name='Total Economic Damage in Billions', limits=c(0,
+  40e+09, 80e+09, 120e+09), labels=c('$0', '$40', '$80', '$120'))
+plot_grid(totalfi, tornadofi, totaled, ncol=1)
+```
+
+
+```{r clean memory3, echo=FALSE}
+# Clean memory
+rm(totalmostfi, totalmosted, over999, totalfi, tornadovsall, tornadofi, over1b, totaled)
+```
+
+### 3.C. Average Results Per Occurence
+
+Which type of event causes the most fatalities per occurence?
+```{r average fatalaties}
+meanfatal <- arrange(aggregate(Fatalities ~ Type, data, mean), desc(Fatalities))
+meanfatal$Fatalities <- round(meanfatal[,'Fatalities'], 1)
+cat('Events causing the most fatalities on average is', meanfatal[1,'Type'], 
+    'with', meanfatal[1,'Fatalities'], 'average fatalities per occurence')
+rm(meanfatal)
+```
+
+Which type of event causes the most injuries per occurence?
+```{r average injuries}
+meaninjury <- arrange(aggregate(Injuries ~ Type, data, mean), desc(Injuries))
+meaninjury$Injuries <- round(meaninjury[,'Injuries'], 1)
+cat('Events causing the most injuries on average is', meaninjury[1,'Type'], 
+    'with', meaninjury[1,'Injuries'], 'average injuries per occurence')
+rm(meaninjury)
+```
+
+Which type of event causes the most fatalities and injuries per occurence?
+```{r average fatalities and injuries}
+meanfi <- arrange(aggregate(TotalFI ~ Type, data, mean), desc(TotalFI))
+meanfi$TotalFI <- round(meanfi[,'TotalFI'], 1)
+cat('Events causing the most fatalities and injuries on average is', meanfi[1,'Type'], 'with', meanfi[1,'TotalFI'], 'average fatalities and injuries per occurence')
+```
+
+Which type of event causes the most economic damage per occurence?
+```{r average economic damage}
+meaned <- arrange(aggregate(EconomicDamage ~ Type, data, mean), desc(EconomicDamage))
+meaned$EconomicDamage <- trunc(meaned$EconomicDamage)
+cat('Events causing the most economic damage on average is', meaned[1,'Type'], 'which causes $', format(meaned[1,'EconomicDamage'], big.mark=',', big.interval=3L), 'average economic damage per occurence')
+```
+
+The first of the two following plots shows the average number of fatalities and injuries per occurence of weather types that average a minimum of 1 fatality/injury. The second one details types that average one million or more per occurence in economic damages. 
+```{r results per occurence, fig.width=7.5, fig.height=7}
+over1 <- filter(meanfi, TotalFI >= 1)
+meanfiplot <- ggplot(over1, aes(x=Type, y=TotalFI, fill=Type)) +
+  geom_bar(stat='identity') + guides(fill=FALSE) + coord_flip() +
+  ggtitle('Event Types With More Than 1 On Average') +
+  xlab('') + ylab('Average number of injuries and fatalities') +
+  geom_text(aes(label = TotalFI), hjust = 2, color = 'white', size = 3) +
+  theme(plot.title = element_text(size=16))
+
+over1m <- filter(meaned, EconomicDamage >= 1000000)
+meanedplot <- ggplot(over1m, aes(x=Type, y=EconomicDamage, fill=Type)) + geom_bar(stat='identity') + xlab('') + ggtitle('$1 Million Damage On Average') + coord_flip() + theme(legend.position='bottom', axis.text.y=element_blank(), axis.ticks.y=element_blank()) + scale_y_discrete(name='Average Dollar Amount of Economic Damage in Millions', limits=c(0,25000000, 50000000, 75000000), labels=c('$0', '$25', '$50', '$75'))
+
+plot_grid(meanfiplot, meanedplot, ncol=1)
+```
+
+```{r clean memory4, echo=FALSE}
+# Clean memory
+rm(meanfi, over1, meanfiplot, over1m, meanedplot)
+```
