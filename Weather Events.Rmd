@@ -4,6 +4,7 @@ author: "Nick Newsome"
 date: " March 17, 2020"
 output:
   html_document:
+    theme: sandstone
     toc: yes
   word_document:
     toc: yes
@@ -427,3 +428,15 @@ plot_grid(meanfiplot, meanedplot, ncol=1)
 # Clean memory
 rm(meanfi, over1, meanfiplot, over1m, meanedplot)
 ```
+
+### 3.D. Write Clean Data File
+```{r write clean data file, warning=FALSE}
+data <- select(data, -EconomicDamage)
+data <- mutate(data, PropertyDamage = PropDamage * PDExp)
+data <- mutate(data, CropDamage = CropDamage * CDExp)
+data$PropertyDamage <-  as.integer(data$PropertyDamage)
+data$CropDamage <-  as.integer(data$CropDamage)
+data <- select(data, -PropDamage, -PDExp, -CDExp)
+fwrite(data, 'CleanedData.csv')
+```
+
